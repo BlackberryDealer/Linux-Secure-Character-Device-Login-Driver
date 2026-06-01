@@ -4,19 +4,25 @@
  *
  * ╔══════════════════════════════════════════════════════════════╗
  * ║  MEMBER 1 — Subsystem Infrastructure & Sysfs Management      ║
+ * ║  STATUS: IMPLEMENTED                                         ║
  * ╠══════════════════════════════════════════════════════════════╣
- * ║  Your Tasks:                                                 ║
- * ║   [DONE]  Basic device registration (given so others can     ║
- * ║          test from Day 1 — you'll enhance/explain this)      ║
- * ║   [TODO]  core_sysfs_init()    — sysfs telemetry dashboard   ║
- * ║   [TODO]  core_sysfs_remove()  — sysfs cleanup               ║
- * ║   [TODO]  failed_logins_show() — read counter from sysfs     ║
- * ║   [TODO]  Secure parameter isolation (already done — explain ║
- * ║          why 0000 permissions matter in your report)         ║
+ * ║  Completed work:                                             ║
+ * ║   [DONE]  Basic device registration (alloc_chrdev_region,    ║
+ * ║          cdev_init, class_create, device_create)             ║
+ * ║   [DONE]  Module parameter security (0000 permissions +      ║
+ * ║          memset-zero of password after hashing)              ║
+ * ║   [DONE]  Kernel version compatibility (#if 6.4 check)       ║
+ * ║   [DONE]  failed_logins_show() — sysfs read callback         ║
+ * ║   [DONE]  core_sysfs_init()    — sysfs telemetry dashboard   ║
+ * ║   [DONE]  core_sysfs_remove()  — sysfs cleanup               ║
  * ║                                                              ║
- * ║  When done you'll be able to run:                            ║
- * ║   cat /sys/kernel/secure_dev/failed_logins                   ║
- * ║   → returns the number of failed login attempts              ║
+ * ║  Verify it works after building & loading the module:        ║
+ * ║   $ cat /sys/kernel/secure_dev/failed_logins                 ║
+ * ║   0                                                          ║
+ * ║                                                              ║
+ * ║  (The counter will increment once Member 2 implements the    ║
+ * ║   real LOGIN ioctl case in fops.c and calls                  ║
+ * ║   atomic_inc(&failed_login_count) on failure.)               ║
  * ╚══════════════════════════════════════════════════════════════╝
  * ================================================================ */
 
@@ -55,28 +61,28 @@ struct kobject *secure_kobj     = NULL;
 atomic_t        failed_login_count = ATOMIC_INIT(0);
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 1 TODO #1:  failed_logins_show() (sysfs read handler)│
- * └──────────────────────────────────────────────────────────────┘
+ * failed_logins_show() — sysfs read callback (Member 1 implementation)
  *
- * When user-space does:    cat /sys/kernel/secure_dev/failed_logins
- * the kernel calls THIS function to produce the displayed text.
+ * Called automatically by the kernel whenever user-space does:
+ *     cat /sys/kernel/secure_dev/failed_logins
  *
- * Your job: write the current value of failed_login_count into `buf`
- * and return how many bytes you wrote.
+ * The kernel hands us a page-sized buffer (PAGE_SIZE = 4 KB) and
+ * expects us to write our text representation into it.  We read
+ * the atomic counter (which Member 2 increments on every failed
+ * login attempt in fops.c) and format it as decimal text.
  *
- * Hints:
- *   - Use atomic_read(&failed_login_count) to read the counter
- *   - Use sprintf(buf, "%d\n", ...) to format the output
- *   - Return the number of bytes written (sprintf returns that)
+ * @kobj  — kobject this attribute belongs to (we don't use it)
+ * @attr  — kobj_attribute descriptor (we don't use it either)
+ * @buf   — destination buffer, at least PAGE_SIZE bytes
+ *
+ * Returns the number of bytes written (sprintf gives us this).
  * ================================================================ */
 static ssize_t failed_logins_show(struct kobject *kobj,
                                    struct kobj_attribute *attr,
                                    char *buf)
 {
-    /* ── STUB: returns placeholder text. Replace with real read. ── */
-    printk(KERN_INFO "secure_dev: [STUB] failed_logins_show called\n");
-    return sprintf(buf, "[STUB] failed_logins read — implement me!\n");
+    int count = atomic_read(&failed_login_count);
+    return sprintf(buf, "%d\n", count);
 }
 
 /* sysfs attribute descriptor — links the file name "failed_logins" to
@@ -84,49 +90,70 @@ static ssize_t failed_logins_show(struct kobject *kobj,
 static struct kobj_attribute failed_logins_attr = __ATTR_RO(failed_logins);
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 1 TODO #2:  core_sysfs_init() — create /sys entry    │
- * └──────────────────────────────────────────────────────────────┘
+ * core_sysfs_init() — Build the sysfs telemetry dashboard
+ *                     (Member 1 implementation)
  *
- * Your "Sysfs Telemetry Dashboard" feature.  Creates the directory
- *      /sys/kernel/secure_dev/
- * and inside it the read-only file
- *      /sys/kernel/secure_dev/failed_logins
- * so admins can monitor security violations with:  cat /sys/...
+ * Creates:
+ *   /sys/kernel/secure_dev/                — directory (kobject)
+ *   /sys/kernel/secure_dev/failed_logins   — read-only attribute file
  *
- * Steps to implement:
- *   1. secure_kobj = kobject_create_and_add("secure_dev", kernel_kobj);
- *      Check if NULL — return -ENOMEM if so.
+ * After this runs, admins can monitor the driver in real time:
+ *     cat /sys/kernel/secure_dev/failed_logins        (one-shot read)
+ *     watch -n1 cat /sys/kernel/secure_dev/failed_logins  (live view)
  *
- *   2. ret = sysfs_create_file(secure_kobj, &failed_logins_attr.attr);
- *      If ret != 0: kobject_put(secure_kobj) and return ret.
+ * Why sysfs and not just dmesg?
+ *   • dmesg is a noisy circular log shared by the whole kernel
+ *   • sysfs gives admins ONE clean integer they can scrape directly
+ *   • Works with monitoring tools (Prometheus exporters, Nagios, etc.)
  *
- *   3. printk a success message and return 0.
- *
- * Returns: 0 on success, negative errno on failure.
+ * Returns 0 on success, negative errno on failure.
  * ================================================================ */
 static int core_sysfs_init(void)
 {
-    /* ── STUB: returns success without creating anything. ── */
-    printk(KERN_INFO "secure_dev: [STUB] core_sysfs_init — /sys/kernel/secure_dev/ NOT created\n");
+    int ret;
+
+    /* Step 1: create the /sys/kernel/secure_dev/ directory.
+     * kernel_kobj is a built-in kobject pointing at /sys/kernel/ */
+    secure_kobj = kobject_create_and_add("secure_dev", kernel_kobj);
+    if (!secure_kobj) {
+        printk(KERN_ERR "secure_dev: kobject_create_and_add failed\n");
+        return -ENOMEM;
+    }
+
+    /* Step 2: add the failed_logins file inside that directory.
+     * The kernel will call failed_logins_show() whenever it is read. */
+    ret = sysfs_create_file(secure_kobj, &failed_logins_attr.attr);
+    if (ret) {
+        printk(KERN_ERR "secure_dev: sysfs_create_file failed: %d\n", ret);
+        kobject_put(secure_kobj);   /* roll back the kobject from step 1 */
+        secure_kobj = NULL;
+        return ret;
+    }
+
+    printk(KERN_INFO "secure_dev: Sysfs dashboard ready — "
+                     "cat /sys/kernel/secure_dev/failed_logins\n");
     return 0;
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 1 TODO #3:  core_sysfs_remove() — cleanup            │
- * └──────────────────────────────────────────────────────────────┘
+ * core_sysfs_remove() — Tear down the sysfs telemetry dashboard
+ *                       (Member 1 implementation)
  *
- * Steps:
- *   1. If secure_kobj != NULL:
- *        sysfs_remove_file(secure_kobj, &failed_logins_attr.attr);
- *        kobject_put(secure_kobj);
- *        secure_kobj = NULL;
+ * Called from secure_driver_exit() during module unload.  Order matters:
+ *   1. Remove the file FIRST (sysfs_remove_file)
+ *   2. THEN drop the kobject reference (kobject_put)
+ * Doing kobject_put first would leave a dangling file.
+ *
+ * Safe to call even if core_sysfs_init() never ran (the NULL check).
  * ================================================================ */
 static void core_sysfs_remove(void)
 {
-    /* ── STUB: does nothing. ── */
-    printk(KERN_INFO "secure_dev: [STUB] core_sysfs_remove\n");
+    if (secure_kobj) {
+        sysfs_remove_file(secure_kobj, &failed_logins_attr.attr);
+        kobject_put(secure_kobj);
+        secure_kobj = NULL;
+        printk(KERN_INFO "secure_dev: Sysfs dashboard removed\n");
+    }
 }
 
 /* ================================================================
