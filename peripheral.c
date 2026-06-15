@@ -27,6 +27,12 @@
 
 #include "secure_internal.h"
 
+/* Track whether we successfully registered (for safe unregister) */
+static bool notifier_registered = false;
+
+/* Track whether the module is ready to handle events. This prevents handling events before the module is fully initialized. */
+static atomic_t module_ready = ATOMIC_INIT(0);
+
 /* ================================================================
  * ┌──────────────────────────────────────────────────────────────┐
  * │  MEMBER 5 TODO #1:  peripheral_notifier_fn()                 │
@@ -62,9 +68,39 @@
  * ================================================================ */
 static int peripheral_notifier_fn(struct notifier_block *nb,
                                    unsigned long event, void *data)
-{
-    /* ── STUB: just prints the event and does nothing. ── */
-    printk(KERN_INFO "secure_dev: [STUB] peripheral_notifier_fn event=%lu\n", event);
+{   
+    struct net_device *dev;
+
+    /* Check if the module is ready, if not, ignore the event */
+    if (atomic_read(&module_ready) == 0)
+        return NOTIFY_DONE;
+
+    /* Extract the net_device pointer from the opaque data. */
+    dev = netdev_notifier_info_to_dev(data);
+
+    /* Inspect the event type and respond accordingly. */
+    switch (event) {
+        /* If a network interface is brought up, flush all sessions */
+        case NETDEV_UP:
+            printk(KERN_WARNING
+               "secure_dev: [PERIPHERAL] interface '%s' link UP — "
+               "hardware state changed, flushing ALL sessions\n",
+               dev->name);
+            flush_all_sessions();
+            break;
+        case NETDEV_DOWN:
+        /* If a network interface is taken down */
+            printk(KERN_WARNING
+               "secure_dev: [PERIPHERAL] interface '%s' link DOWN — "
+               "hardware state changed, flushing ALL sessions\n",
+               dev->name);
+            flush_all_sessions();
+            break;
+        default:
+            // ignore other events (NETDEV_CHANGE, NETDEV_REGISTER, etc.)
+            break;
+    }
+
     return NOTIFY_DONE;
 }
 
@@ -74,8 +110,6 @@ static struct notifier_block peripheral_nb = {
     .notifier_call = peripheral_notifier_fn,
 };
 
-/* Track whether we successfully registered (for safe unregister) */
-static bool notifier_registered = false;
 
 /* ================================================================
  * ┌──────────────────────────────────────────────────────────────┐
@@ -93,8 +127,27 @@ static bool notifier_registered = false;
  * ================================================================ */
 int peripheral_register(void)
 {
-    /* ── STUB: does NOT register — leaves notifier_registered = false ── */
-    printk(KERN_INFO "secure_dev: [STUB] peripheral_register — notifier NOT installed\n");
+    int ret = register_netdevice_notifier(&peripheral_nb);
+
+    /* handle registration failure */
+    if (ret != 0) {
+        printk(KERN_ERR
+               "secure_dev: [PERIPHERAL] register_netdevice_notifier "
+               "failed (err=%d) — peripheral monitoring NOT active\n",
+               ret);
+        return ret;
+    }
+
+    /* handle registration success */
+    notifier_registered = true;
+
+    /* Set module_ready to 1, indicating that the module is fully initialized and ready to handle events. */
+    atomic_set(&module_ready, 1);
+
+    printk(KERN_INFO
+           "secure_dev: [PERIPHERAL] register_netdevice_notifier "
+           "succeeded — peripheral monitoring active\n");
+
     return 0;
 }
 
@@ -118,6 +171,19 @@ int peripheral_register(void)
  * ================================================================ */
 void peripheral_unregister(void)
 {
-    /* ── STUB: nothing to unregister since register was a no-op. ── */
-    printk(KERN_INFO "secure_dev: [STUB] peripheral_unregister\n");
+    /* Only unregister if successfully registered in the first place. */
+    if (notifier_registered) {
+
+        /* Set module_ready to 0 to prevent handling events during unregistration */
+        atomic_set(&module_ready, 0); 
+
+        /* goes through the notifier list and removes callback */
+        unregister_netdevice_notifier(&peripheral_nb);
+        notifier_registered = false;
+        printk(KERN_INFO "secure_dev: [PERIPHERAL] peripheral_unregister — notifier uninstalled\n");
+    }
+    /* If the notifier was not registered, print a warning */
+    else {
+        printk(KERN_WARNING "secure_dev: [PERIPHERAL] peripheral_unregister — notifier was not registered, nothing to uninstall\n");
+    }
 }
