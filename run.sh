@@ -142,7 +142,7 @@ check_build_tools() {
 
 check_source_files() {
     local missing=()
-    for f in secure_driver.c secure_driver.h user_app.c Makefile; do
+    for f in core.c crypto.c fops.c peripheral.c session.c secure_driver.h user_app.c Makefile; do
         [[ -f "$f" ]] || missing+=("$f")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then

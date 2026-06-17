@@ -48,9 +48,9 @@ MODULE_SOFTDEP("pre: sha256");
  *   Explain WHY 0000 permissions matter for security in your report.
  * ──────────────────────────────────────────────────────────────────────── */
 char        *param_username = "admin";
-static char *param_password = "SecurePass123";
+static char param_password[128] = "SecurePass123";
 module_param(param_username, charp, 0000);
-module_param(param_password, charp, 0000);
+module_param_string(param_password, param_password, sizeof(param_password), 0000);
 
 /* ── Globals defined here (declared extern in secure_internal.h) ── */
 int             major_number;
