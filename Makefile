@@ -1,5 +1,5 @@
 # ================================================================
-# Makefile — Secure Character Device Login Driver (Stub Skeleton)
+# Makefile — Secure Character Device Login Driver
 # CSC1107 Operating Systems — Project 12
 #
 # Builds:

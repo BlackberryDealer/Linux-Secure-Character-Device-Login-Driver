@@ -576,8 +576,6 @@ static void run_interactive(void)
         case 4:   /* Read */
             /* Reset file position by closing and reopening */
             if (g_fd >= 0) {
-                int was_open = 1;
-                (void)was_open;
                 op_close_device();
                 op_open_device();
                 print_info("Tip: you need to re-login after reopening.");

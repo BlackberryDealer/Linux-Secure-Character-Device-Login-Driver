@@ -5,7 +5,7 @@
  * ╔══════════════════════════════════════════════════════════════╗
  * ║  MEMBER 4 — Cryptographic Subsystem & Side-Channel Shielding ║
  * ╠══════════════════════════════════════════════════════════════╣
- * ║  Your Tasks:                                                 ║
+ * ║  Implemented:                                               ║
  * ║   [DONE]  compute_sha256()                — kernel SHA-256   ║
  * ║   [DONE]  crypto_constant_time_compare()  — wraps memneq     ║
  * ║   [DONE]  crypto_generate_token()         — wraps get_random ║
@@ -17,9 +17,8 @@
  * ║   - Timing Side-Channel Protection: crypto_memneq instead    ║
  * ║     of memcmp; constant time regardless of input             ║
  * ║                                                              ║
- * ║  ⚠ The stubs below let other members test their code, but    ║
- * ║    use FAKE crypto (all-zero hashes, etc.).  Your real       ║
- * ║    implementation gives the driver actual security.          ║
+ * ║  All functions below are fully implemented and provide the   ║
+ * ║  driver's real cryptographic security (no placeholder crypto)║
  * ╚══════════════════════════════════════════════════════════════╝
  * ================================================================ */
 

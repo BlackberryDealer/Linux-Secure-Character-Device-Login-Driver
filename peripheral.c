@@ -5,12 +5,12 @@
  * ╔══════════════════════════════════════════════════════════════╗
  * ║  MEMBER 5 — Asynchronous Peripheral Event Interceptor        ║
  * ╠══════════════════════════════════════════════════════════════╣
- * ║  Your Tasks:                                                 ║
- * ║   [TODO]  peripheral_notifier_fn() — the callback the kernel ║
+ * ║  Implemented:                                               ║
+ * ║   [DONE]  peripheral_notifier_fn() — the callback the kernel ║
  * ║                                       calls on each netdev   ║
  * ║                                       event                  ║
- * ║   [TODO]  peripheral_register()    — install the notifier    ║
- * ║   [TODO]  peripheral_unregister()  — remove the notifier     ║
+ * ║   [DONE]  peripheral_register()    — install the notifier    ║
+ * ║   [DONE]  peripheral_unregister()  — remove the notifier     ║
  * ║                                                              ║
  * ║  Your "flashy" features for the report:                      ║
  * ║   - Kernel Netdevice Notifier Block: subscribe to async      ║

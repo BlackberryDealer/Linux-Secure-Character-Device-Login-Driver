@@ -5,12 +5,12 @@
  * ╔══════════════════════════════════════════════════════════════╗
  * ║  MEMBER 2 — File Operations & User-Kernel Isolation Matrix   ║
  * ╠══════════════════════════════════════════════════════════════╣
- * ║  Your Tasks:                                                 ║
- * ║   [TODO]  secure_open()    — alloc session via Member 3      ║
- * ║   [TODO]  secure_release() — free session via Member 3       ║
- * ║   [TODO]  secure_read()    — auth gate + copy_to_user        ║
- * ║   [TODO]  secure_write()   — auth gate + copy_from_user      ║
- * ║   [TODO]  secure_ioctl()   — dispatch LOGIN/LOGOUT/STATUS/   ║
+ * ║  Implemented:                                               ║
+ * ║   [DONE]  secure_open()    — alloc session via Member 3      ║
+ * ║   [DONE]  secure_release() — free session via Member 3       ║
+ * ║   [DONE]  secure_read()    — auth gate + copy_to_user        ║
+ * ║   [DONE]  secure_write()   — auth gate + copy_from_user      ║
+ * ║   [DONE]  secure_ioctl()   — dispatch LOGIN/LOGOUT/STATUS/   ║
  * ║                              GET_TOKEN/VERIFY_TOKEN cases    ║
  * ║                                                              ║
  * ║  Your "flashy" features for the report:                      ║
@@ -361,7 +361,11 @@ static long secure_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         creds.username[MAX_USERNAME_LEN - 1] = '\0';
         creds.password[MAX_PASSWORD_LEN - 1] = '\0';
 
-        compute_sha256((unsigned char *)creds.password, strlen(creds.password), input_hash);
+        if (compute_sha256((unsigned char *)creds.password,
+                           strlen(creds.password), input_hash)) {
+            memset(&creds, 0, sizeof(creds));
+            return -EIO;
+        }
 
         mutex_lock(&session_mutex);
         user_match = (strncmp(creds.username, param_username, MAX_USERNAME_LEN) == 0);
@@ -410,7 +414,11 @@ static long secure_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             return -EACCES;
         }
         crypto_generate_token(raw_token, TOKEN_RAW_BYTES);
-        compute_sha256(raw_token, TOKEN_RAW_BYTES, sess->token_hash);
+        if (compute_sha256(raw_token, TOKEN_RAW_BYTES, sess->token_hash)) {
+            mutex_unlock(&session_mutex);
+            memset(raw_token, 0, TOKEN_RAW_BYTES);
+            return -EIO;
+        }
         sess->token_valid = true;
         mutex_unlock(&session_mutex);
         bytes_to_hex(raw_token, TOKEN_RAW_BYTES, hex);
@@ -440,7 +448,10 @@ static long secure_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
          * and read past the end of user_hex.  Reject malformed hex too. */
         if (hex_to_bytes(user_hex, user_raw, TOKEN_RAW_BYTES))
             return -EINVAL;
-        compute_sha256(user_raw, TOKEN_RAW_BYTES, presented_hash);
+        if (compute_sha256(user_raw, TOKEN_RAW_BYTES, presented_hash)) {
+            memset(user_raw, 0, TOKEN_RAW_BYTES);
+            return -EIO;
+        }
 
         mutex_lock(&session_mutex);
         if (crypto_constant_time_compare(presented_hash, sess->token_hash, SHA256_DIGEST_BYTES) == 0) {

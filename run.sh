@@ -142,7 +142,7 @@ check_build_tools() {
 
 check_source_files() {
     local missing=()
-    for f in core.c crypto.c fops.c peripheral.c session.c secure_driver.h user_app.c Makefile; do
+    for f in core.c crypto.c fops.c peripheral.c session.c secure_driver.h secure_internal.h user_app.c Makefile; do
         [[ -f "$f" ]] || missing+=("$f")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -224,12 +224,16 @@ verify_device_node() {
     if [[ ! -e "$DEVICE_PATH" ]]; then
         warn "udev has not yet created ${DEVICE_PATH}, attempting manual creation..."
 
-        # Look up the major number assigned to our device
+        # Look up the major number assigned to our device.
+        # NOTE: /proc/devices lists the DEVICE name ("secure_dev", passed to
+        # alloc_chrdev_region), NOT the module name ("secure_driver").
+        local DEV_BASENAME
+        DEV_BASENAME="$(basename "$DEVICE_PATH")"   # secure_dev
         local MAJOR
-        MAJOR=$(awk "\$2 == \"${MODULE_NAME}\" {print \$1}" /proc/devices 2>/dev/null || true)
+        MAJOR=$(awk "\$2 == \"${DEV_BASENAME}\" {print \$1}" /proc/devices 2>/dev/null || true)
 
         if [[ -z "$MAJOR" ]]; then
-            fail "Could not find major number for '${MODULE_NAME}' in /proc/devices"
+            fail "Could not find major number for '${DEV_BASENAME}' in /proc/devices"
             dmesg | grep secure_dev | tail -10
             exit 1
         fi
@@ -309,10 +313,9 @@ main() {
     # ── Run demo ──
     print_header "Running User-Space Demo (./user_app --demo)"
     echo ""
-    ${USER_APP} --demo
-    # Note: set -e is active, but user_app returning non-zero shouldn't
-    # abort the script — we still want to show dmesg.  Use || true.
-    true
+    # set -e is active, but a non-zero exit from the demo shouldn't abort the
+    # script — we still want to show the dmesg output below.  Hence "|| true".
+    ${USER_APP} --demo || true
 
     # ── Final dmesg ──
     show_dmesg "[after demo]"

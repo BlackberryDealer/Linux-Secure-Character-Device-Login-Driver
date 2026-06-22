@@ -16,7 +16,7 @@ The architecture is highly decoupled, distributing specialized kernel workloads 
 
 ## 🚀 Quick Start: Automated Execution & Testing
 
-The workspace comes out-of-the-box as a fully compiling skeleton framework using structural "stubs" (placeholders). You can execute the entire compilation, installation, deployment, and testing lifecycle in a single command using the master automation script.
+All five kernel components are fully implemented. You can execute the entire compilation, installation, deployment, and testing lifecycle in a single command using the master automation script.
 
 ### Prerequisites
 
@@ -169,4 +169,4 @@ dmesg -w | grep secure_dev
 ## 💡 Pro-Tip for Git Contributions
 
 - **Do NOT edit `secure_driver.h` or `secure_internal.h`**: These headers form a hard cross-file compiler contract. Modifying function parameters or declarations in these files will disrupt integration across the other code files.
-- **Incremental Replacement**: Each source file contains standard `[TODO]` markers. Replace the `/* ── STUB ── */` log markers only when your true functional operations are thoroughly validated.
+- **Respect file ownership**: Each `.c` file is owned by one team member (see the banner at the top of each source file). Keep changes within your own file so the locked header contract continues to link cleanly.
