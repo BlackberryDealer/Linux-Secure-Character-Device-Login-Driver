@@ -432,7 +432,14 @@ static long secure_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         mutex_unlock(&session_mutex);
 
         if (copy_from_user(user_hex, argp, TOKEN_HEX_LEN)) return -EFAULT;
-        hex_to_bytes(user_hex, user_raw, TOKEN_HEX_LEN);
+        user_hex[TOKEN_HEX_LEN - 1] = '\0';   /* force-terminate untrusted input */
+
+        /* Decode TOKEN_RAW_BYTES (16) bytes, NOT TOKEN_HEX_LEN (33).
+         * user_raw is only TOKEN_RAW_BYTES wide — passing the hex length
+         * here would write 33 bytes into a 16-byte stack buffer (overflow)
+         * and read past the end of user_hex.  Reject malformed hex too. */
+        if (hex_to_bytes(user_hex, user_raw, TOKEN_RAW_BYTES))
+            return -EINVAL;
         compute_sha256(user_raw, TOKEN_RAW_BYTES, presented_hash);
 
         mutex_lock(&session_mutex);

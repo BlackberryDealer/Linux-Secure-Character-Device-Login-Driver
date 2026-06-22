@@ -4,15 +4,16 @@
  *
  * ╔══════════════════════════════════════════════════════════════╗
  * ║  MEMBER 3 — State Machine & Concurrent Kernel Locking Engine ║
+ * ║  STATUS: IMPLEMENTED                                         ║
  * ╠══════════════════════════════════════════════════════════════╣
- * ║  Your Tasks:                                                 ║
- * ║   [TODO]  session_subsystem_init()    — mutex + list init    ║
- * ║   [TODO]  session_subsystem_cleanup() — free leftover sessions║
- * ║   [TODO]  session_alloc()  — kmalloc + add to global list    ║
- * ║   [TODO]  session_free()   — remove from list + kfree        ║
- * ║   [TODO]  flush_all_sessions() — iterate list, clear auth    ║
+ * ║  Completed work:                                            ║
+ * ║   [DONE]  session_subsystem_init()    — mutex + list init    ║
+ * ║   [DONE]  session_subsystem_cleanup() — free leftover sessions║
+ * ║   [DONE]  session_alloc()  — kmalloc + add to global list    ║
+ * ║   [DONE]  session_free()   — remove from list + wipe + kfree ║
+ * ║   [DONE]  flush_all_sessions() — iterate list, clear auth    ║
  * ║                                                              ║
- * ║  Your "flashy" features for the report:                      ║
+ * ║  "Flashy" features for the report:                          ║
  * ║   - Dynamic Context Memory Binding: kmalloc'd sessions       ║
  * ║     attached to file->private_data (no static array)         ║
  * ║   - Kernel Mutex Primitives: mutex_lock/unlock around list   ║
@@ -21,6 +22,25 @@
  * ║  DEMAND (when a process opens /dev/secure_dev), not from a   ║
  * ║  fixed-size array. Sessions scale to any number of processes.║
  * ╚══════════════════════════════════════════════════════════════╝
+ *
+ * ── CONCURRENCY MODEL (read this before touching the locking) ──
+ *
+ *   ONE global lock, `session_mutex`, protects TWO things:
+ *     1. The integrity of the `session_list` linked list itself
+ *        (add/remove must be serialized).
+ *     2. The mutable fields of every session_entry on that list
+ *        (authenticated / token_valid / username / token_hash).
+ *
+ *   fops.c takes the SAME mutex when it reads/writes those session
+ *   fields, so all of {open, read, write, ioctl, release} and our
+ *   flush_all_sessions() are serialized against each other. No file
+ *   in this project ever nests another lock inside session_mutex,
+ *   so there is no lock-ordering / deadlock hazard.
+ *
+ *   We never call copy_*_user(), kmalloc(GFP_KERNEL) blocking work,
+ *   or any sleeping primitive WHILE HOLDING the lock for longer than
+ *   necessary — kmalloc in session_alloc() happens BEFORE we take the
+ *   lock, and kfree in session_free() happens AFTER we release it.
  * ================================================================ */
 
 #include "secure_internal.h"
@@ -30,144 +50,190 @@ struct mutex     session_mutex;
 LIST_HEAD(session_list);   /* global list of all active sessions */
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 3 TODO #1:  session_subsystem_init()                 │
- * └──────────────────────────────────────────────────────────────┘
+ * session_subsystem_init()
  *
- * Called once by core.c during module load.
+ * Called once by core.c during module load (before any file can be
+ * opened, so no locking is required here).
  *
- * Steps:
- *   1. mutex_init(&session_mutex);
- *   2. INIT_LIST_HEAD(&session_list);   (LIST_HEAD already inits, but
- *                                        explicit init is good practice)
- *   3. printk init message, return 0.
+ *   1. mutex_init(&session_mutex) — REQUIRED: session_mutex is a
+ *      plain `struct mutex` (not DEFINE_MUTEX), so it is NOT
+ *      statically initialised. Skipping this would mean fops.c locks
+ *      an uninitialised mutex → undefined behaviour.
+ *   2. INIT_LIST_HEAD(&session_list) — defensive; LIST_HEAD() above
+ *      already initialises it, but being explicit documents intent.
  * ================================================================ */
 int session_subsystem_init(void)
 {
-    /* ── STUB: initialize mutex so other code doesn't deadlock. ── */
     mutex_init(&session_mutex);
     INIT_LIST_HEAD(&session_list);
-    printk(KERN_INFO "secure_dev: [STUB] session_subsystem_init\n");
+    printk(KERN_INFO "secure_dev: session subsystem initialised\n");
     return 0;
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 3 TODO #2:  session_subsystem_cleanup()              │
- * └──────────────────────────────────────────────────────────────┘
+ * session_subsystem_cleanup()
  *
- * Called once by core.c during module unload.
+ * Called once by core.c during module unload (rmmod). Defensive
+ * sweep: if any session_entry is somehow still on the list, free it
+ * so the module leaves no leaked slab memory behind.
  *
- * Steps:
- *   1. mutex_lock(&session_mutex);
- *   2. Iterate session_list with list_for_each_entry_safe() and
- *      kfree each remaining session (shouldn't normally happen if
- *      all file descriptors were closed, but defensive cleanup).
- *   3. mutex_unlock(&session_mutex);
- *   4. printk cleanup message.
+ * In normal operation the list is already empty here — the kernel
+ * refuses to rmmod while any fd is open (cdev owner refcount), and
+ * every close() runs session_free(). This loop only matters as a
+ * safety net, but a "secure" driver should never leak kernel memory.
  *
- * Hint:
- *   struct session_entry *sess, *tmp;
- *   list_for_each_entry_safe(sess, tmp, &session_list, node) {
- *       list_del(&sess->node);
- *       kfree(sess);
- *   }
+ * We use list_for_each_entry_safe() because we kfree the node we are
+ * standing on during iteration; the _safe variant caches the next
+ * pointer first so the walk does not dereference freed memory.
  * ================================================================ */
 void session_subsystem_cleanup(void)
 {
-    /* ── STUB: does no cleanup yet. ── */
-    printk(KERN_INFO "secure_dev: [STUB] session_subsystem_cleanup\n");
+    struct session_entry *sess, *tmp;
+    int leaked = 0;
+
+    mutex_lock(&session_mutex);
+    list_for_each_entry_safe(sess, tmp, &session_list, node) {
+        list_del(&sess->node);
+        /* Wipe any residual credentials before returning memory to slab */
+        memset(sess, 0, sizeof(*sess));
+        kfree(sess);
+        leaked++;
+    }
+    mutex_unlock(&session_mutex);
+
+    if (leaked)
+        printk(KERN_WARNING
+               "secure_dev: session cleanup freed %d leftover session(s)\n",
+               leaked);
+    else
+        printk(KERN_INFO "secure_dev: session subsystem cleaned up\n");
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 3 TODO #3:  session_alloc()                          │
- * └──────────────────────────────────────────────────────────────┘
+ * session_alloc()
  *
  * Called by Member 2's secure_open() when a new process opens
- * /dev/secure_dev.  This is your "Dynamic Context Memory Binding"
- * feature — allocate on demand from the kernel slab.
+ * /dev/secure_dev. This is the "Dynamic Context Memory Binding"
+ * feature — one descriptor allocated on demand from the kernel slab,
+ * then linked into the global list so flush_all_sessions() can find it.
  *
- * Steps:
- *   1. sess = kmalloc(sizeof(*sess), GFP_KERNEL);
- *      If NULL: return NULL.
- *   2. memset(sess, 0, sizeof(*sess));
- *   3. sess->pid = current->pid;
- *      sess->authenticated = false;
- *      sess->token_valid = false;
- *      INIT_LIST_HEAD(&sess->node);
- *   4. mutex_lock(&session_mutex);
- *      list_add(&sess->node, &session_list);
- *      mutex_unlock(&session_mutex);
- *   5. printk and return sess.
+ *   1. kmalloc the descriptor (done OUTSIDE the lock — GFP_KERNEL may
+ *      sleep, and we want to hold session_mutex for as short a window
+ *      as possible).
+ *   2. Zero it so authenticated/token_valid start false and no stale
+ *      slab contents leak into a fresh session.
+ *   3. Record the owning PID (for log messages only) and init the
+ *      list node.
+ *   4. Take the lock JUST to splice the node onto session_list.
+ *
+ * Returns the session pointer, or NULL on allocation failure (which
+ * secure_open() translates into -ENOMEM to user space).
  * ================================================================ */
 struct session_entry *session_alloc(void)
 {
-    /* ── STUB: minimal kmalloc + zero, but NOT added to global list yet. ── */
-    struct session_entry *sess = kmalloc(sizeof(*sess), GFP_KERNEL);
+    struct session_entry *sess;
+
+    sess = kmalloc(sizeof(*sess), GFP_KERNEL);
     if (!sess) {
-        printk(KERN_ERR "secure_dev: [STUB] session_alloc — kmalloc failed\n");
+        printk(KERN_ERR "secure_dev: session_alloc — kmalloc failed\n");
         return NULL;
     }
+
     memset(sess, 0, sizeof(*sess));
-    sess->pid = current->pid;
+    sess->pid           = current->pid;
+    sess->authenticated = false;
+    sess->token_valid   = false;
     INIT_LIST_HEAD(&sess->node);
-    /* TODO Member 3: add to global session_list with mutex */
-    printk(KERN_INFO "secure_dev: [STUB] session_alloc PID %d (NOT on global list)\n", sess->pid);
+
+    /* Publish the new session to the global list (serialised). */
+    mutex_lock(&session_mutex);
+    list_add(&sess->node, &session_list);
+    mutex_unlock(&session_mutex);
+
+    printk(KERN_INFO "secure_dev: session allocated for PID %d\n", sess->pid);
     return sess;
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 3 TODO #4:  session_free()                           │
- * └──────────────────────────────────────────────────────────────┘
+ * session_free()
  *
- * Called by Member 2's secure_release() when a process closes
- * the device.
+ * Called by Member 2's secure_release() when a process closes the
+ * device. Removes the session from the global list, scrubs its
+ * secrets, and returns the memory to the slab allocator.
  *
- * Steps:
- *   1. If sess == NULL: return.
- *   2. mutex_lock(&session_mutex);
- *      list_del(&sess->node);
- *      mutex_unlock(&session_mutex);
- *   3. Security: memset(sess, 0, sizeof(*sess)) before freeing —
- *      so the freed memory contains no leftover token/username.
- *   4. kfree(sess);
- *   5. printk.
+ *   1. NULL guard (open may have failed before a session existed).
+ *   2. list_del UNDER the lock — once unlinked, flush_all_sessions()
+ *      can no longer reach this node, which is what makes the kfree
+ *      below safe against a concurrent flush.
+ *   3. memset(0) AFTER unlinking, BEFORE kfree — "Immediate
+ *      Destructive Sanitization": no leftover username / token hash
+ *      survives in freed kernel memory.
+ *   4. kfree outside the lock (kfree must not be needlessly held under
+ *      a mutex, and the node is already private to us at this point).
  * ================================================================ */
 void session_free(struct session_entry *sess)
 {
-    /* ── STUB: just kfree, NOT removing from list (list is empty in stub). ── */
+    pid_t pid;
+
     if (!sess)
         return;
-    printk(KERN_INFO "secure_dev: [STUB] session_free PID %d\n", sess->pid);
+
+    pid = sess->pid;
+
+    mutex_lock(&session_mutex);
+    list_del(&sess->node);
+    mutex_unlock(&session_mutex);
+
+    /* Scrub credentials/token before the memory can be reused. */
+    memset(sess, 0, sizeof(*sess));
     kfree(sess);
+
+    printk(KERN_INFO "secure_dev: session freed for PID %d\n", pid);
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 3 TODO #5:  flush_all_sessions()                     │
- * └──────────────────────────────────────────────────────────────┘
+ * flush_all_sessions()
  *
- * Called by Member 5's peripheral.c when Ethernet plug/unplug
- * is detected.  Logs out EVERY currently authenticated session.
+ * Called by Member 5's peripheral.c when an Ethernet link change
+ * (NETDEV_UP / NETDEV_DOWN) is detected. Forcibly de-authenticates
+ * EVERY active session — a hardware-triggered, system-wide logout.
  *
- * Steps:
- *   1. mutex_lock(&session_mutex);
- *   2. list_for_each_entry(sess, &session_list, node) {
- *          if (sess->authenticated) {
- *              printk("Flushing session for PID %d", sess->pid);
- *              sess->authenticated = false;
- *              sess->token_valid = false;
- *              memset(sess->username, 0, MAX_USERNAME_LEN);
- *              memset(sess->token_hash, 0, SHA256_DIGEST_BYTES);
- *          }
- *      }
- *   3. mutex_unlock(&session_mutex);
- *   4. printk("All sessions flushed");
+ * We walk the list under the lock and clear the auth state in place.
+ * We do NOT free or unlink anything here: the file descriptors are
+ * still open, so the session_entry structs must stay alive. We only
+ * reset them to the unauthenticated state, exactly as a LOGOUT ioctl
+ * would, so the next read/write from those fds is rejected until the
+ * user logs in again.
+ *
+ * list_for_each_entry() (non-safe) is correct here because we never
+ * remove a node inside the loop.
+ *
+ * Locking note: this runs from the netdevice notifier, which the
+ * kernel invokes in process context (under RTNL). Sleeping locks like
+ * mutex_lock() are therefore permitted. The lock order is always
+ * RTNL → session_mutex and never the reverse, so no deadlock arises.
  * ================================================================ */
 void flush_all_sessions(void)
 {
-    /* ── STUB: does nothing — Member 3 implements real flush. ── */
-    printk(KERN_INFO "secure_dev: [STUB] flush_all_sessions — no sessions flushed\n");
+    struct session_entry *sess;
+    int flushed = 0;
+
+    mutex_lock(&session_mutex);
+    list_for_each_entry(sess, &session_list, node) {
+        if (sess->authenticated) {
+            printk(KERN_WARNING
+                   "secure_dev: flushing authenticated session (PID %d)\n",
+                   sess->pid);
+            sess->authenticated = false;
+            sess->token_valid   = false;
+            memset(sess->username,   0, MAX_USERNAME_LEN);
+            memset(sess->token_hash, 0, SHA256_DIGEST_BYTES);
+            flushed++;
+        }
+    }
+    mutex_unlock(&session_mutex);
+
+    printk(KERN_INFO
+           "secure_dev: flush_all_sessions complete — %d session(s) logged out\n",
+           flushed);
 }
