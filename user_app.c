@@ -574,11 +574,9 @@ static void run_interactive(void)
         }
 
         case 4:   /* Read */
-            /* Reset file position by closing and reopening */
+            /* Reset file position to 0 so we can read the message again without closing */
             if (g_fd >= 0) {
-                op_close_device();
-                op_open_device();
-                print_info("Tip: you need to re-login after reopening.");
+                lseek(g_fd, 0, SEEK_SET);
             }
             op_read();
             break;
