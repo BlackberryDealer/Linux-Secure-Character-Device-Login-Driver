@@ -1,25 +1,17 @@
 /* ================================================================
- * crypto.c — Cryptographic Subsystem & Side-Channel Shielding
- * CSC1107 Project 12 — Secure Character Device Login Driver
+ * crypto.c - Cryptographic Subsystem and Side-Channel Shielding
+ * CSC1107 Project 12 - Secure Character Device Login Driver
+ * Owner: Member 4
  *
- * ╔══════════════════════════════════════════════════════════════╗
- * ║  MEMBER 4 — Cryptographic Subsystem & Side-Channel Shielding ║
- * ╠══════════════════════════════════════════════════════════════╣
- * ║  Implemented:                                               ║
- * ║   [DONE]  compute_sha256()                — kernel SHA-256   ║
- * ║   [DONE]  crypto_constant_time_compare()  — wraps memneq     ║
- * ║   [DONE]  crypto_generate_token()         — wraps get_random ║
- * ║   [DONE]  bytes_to_hex() / hex_to_bytes() — encoding helpers ║
- * ║                                                              ║
- * ║  Your "flashy" features for the report:                      ║
- * ║   - Native Kernel Crypto API: crypto_alloc_shash +           ║
- * ║     crypto_shash_update + crypto_shash_final (streaming API) ║
- * ║   - Timing Side-Channel Protection: crypto_memneq instead    ║
- * ║     of memcmp; constant time regardless of input             ║
- * ║                                                              ║
- * ║  All functions below are fully implemented and provide the   ║
- * ║  driver's real cryptographic security (no placeholder crypto)║
- * ╚══════════════════════════════════════════════════════════════╝
+ * Provides the driver's real cryptography:
+ *   - compute_sha256()                SHA-256 via the kernel crypto API.
+ *   - crypto_constant_time_compare()  constant-time buffer compare.
+ *   - crypto_generate_token()         random token from the kernel CSPRNG.
+ *   - bytes_to_hex() / hex_to_bytes() raw and hex conversion helpers.
+ *
+ * The constant-time compare and the CSPRNG are the two security-
+ * critical pieces. They defend against timing side channels and
+ * predictable tokens respectively.
  * ================================================================ */
 
 #include "secure_internal.h"
@@ -28,31 +20,15 @@
 unsigned char stored_pw_hash[SHA256_DIGEST_BYTES];
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 4 DONE #1:  compute_sha256()                         │
- * └──────────────────────────────────────────────────────────────┘
+ * compute_sha256() - SHA-256 digest of `data` into `digest`.
  *
- * Compute the SHA-256 digest of `data` using the kernel's crypto API.
+ * Uses the kernel crypto API in the standard init / update / final
+ * streaming pattern. `digest` must hold SHA256_DIGEST_BYTES (32).
+ * Allocates a transform and descriptor per call and frees both before
+ * returning. Returns 0 on success, negative errno on failure.
  *
- * Steps to implement (use the streaming update/final pattern):
- *   1. struct crypto_shash *tfm = crypto_alloc_shash("sha256", 0, 0);
- *      If IS_ERR(tfm): printk error and return PTR_ERR(tfm).
- *
- *   2. size_t desc_size = sizeof(struct shash_desc) +
- *                          crypto_shash_descsize(tfm);
- *      struct shash_desc *sdesc = kmalloc(desc_size, GFP_KERNEL);
- *      If NULL: crypto_free_shash(tfm); return -ENOMEM;
- *      sdesc->tfm = tfm;
- *
- *   3. ret = crypto_shash_init(sdesc);          // start the hash
- *      ret = crypto_shash_update(sdesc, data, data_len);  // feed data
- *      ret = crypto_shash_final(sdesc, digest); // get the result
- *      Check each return value.
- *
- *   4. kfree(sdesc); crypto_free_shash(tfm);
- *   5. Return 0 on success.
- *
- * Returns 0 on success, negative errno on failure.
+ * Callers run this outside session_mutex where possible, since the
+ * transform allocation below can sleep.
  * ================================================================ */
 int compute_sha256(const unsigned char *data, size_t data_len,
                    unsigned char *digest)
@@ -93,25 +69,13 @@ out:
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 4 DONE #2:  crypto_constant_time_compare()           │
- * └──────────────────────────────────────────────────────────────┘
+ * crypto_constant_time_compare() - timing-safe buffer compare.
  *
- * Your "Timing Side-Channel Protection" feature.
- *
- * crypto_memneq() compares two buffers in CONSTANT time — it always
- * scans the full length regardless of where (or whether) the buffers
- * differ.  This stops attackers from learning the stored hash by
- * measuring how long the comparison takes.
- *
- * Steps:
- *   return crypto_memneq(a, b, len);
- *
- * (Yes, that's the whole function.  But explain the WHY in your report —
- * how memcmp() leaks via early exit, why this matters for password &
- * token verification, the byte-by-byte hash recovery attack.)
- *
- * Returns 0 if buffers are equal, non-zero if they differ.
+ * Wraps crypto_memneq(), which always scans the full length instead of
+ * returning early on the first mismatch the way memcmp() does. That
+ * fixed timing stops an attacker from recovering the stored hash byte
+ * by byte by measuring how long each comparison takes.
+ * Returns 0 if the buffers are equal, non-zero if they differ.
  * ================================================================ */
 int crypto_constant_time_compare(const void *a, const void *b, size_t len)
 {
@@ -119,19 +83,11 @@ int crypto_constant_time_compare(const void *a, const void *b, size_t len)
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 4 DONE #3:  crypto_generate_token()                  │
- * └──────────────────────────────────────────────────────────────┘
+ * crypto_generate_token() - fill `out` with `len` random bytes.
  *
- * Your "Cryptographic Token Generation" feature.  Fills `out` with
- * `len` bytes of cryptographically strong random data.
- *
- * Steps:
- *   get_random_bytes(out, len);
- *
- * (Again the whole function — but the report should explain the
- * difference between userspace rand() and kernel CSPRNG, and why
- * unpredictable session tokens matter for the security model.)
+ * Uses get_random_bytes(), the kernel CSPRNG, so tokens are
+ * unpredictable. This is deliberately not userspace rand(), whose
+ * sequence an attacker could reproduce.
  * ================================================================ */
 void crypto_generate_token(unsigned char *out, size_t len)
 {
@@ -139,25 +95,15 @@ void crypto_generate_token(unsigned char *out, size_t len)
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 4 DONE #4:  bytes_to_hex()                           │
- * └──────────────────────────────────────────────────────────────┘
+ * bytes_to_hex() - encode `len` raw bytes as a lowercase hex string.
  *
- * Convert raw bytes to a lowercase hex string.
- * Example: {0xA3, 0x7F} -> "a37f\0"
- *
- * Steps:
- *   for (size_t i = 0; i < len; i++)
- *       sprintf(hex + i * 2, "%02x", bytes[i]);
- *   hex[len * 2] = '\0';
- *
- * (This is simple enough you can implement it now — but explain
- * in your report why returning a hex string to user space is safer
- * than returning raw binary bytes.)
+ * Example: {0xA3, 0x7F} becomes "a37f". The caller's `hex` buffer must
+ * hold len*2 + 1 bytes (two chars per byte plus the terminator). The
+ * token is handed to user space as hex rather than raw binary so it is
+ * safe to print and copy as text.
  * ================================================================ */
 void bytes_to_hex(const unsigned char *bytes, size_t len, char *hex)
 {
-    /* This stub IS a real implementation — bytes_to_hex is trivial. */
     size_t i;
     for (i = 0; i < len; i++)
         sprintf(hex + i * 2, "%02x", bytes[i]);
@@ -165,22 +111,13 @@ void bytes_to_hex(const unsigned char *bytes, size_t len, char *hex)
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 4 DONE #5:  hex_to_bytes()                           │
- * └──────────────────────────────────────────────────────────────┘
+ * hex_to_bytes() - decode 2*len hex chars into `len` raw bytes.
  *
- * Reverse of bytes_to_hex.  "a37f" -> {0xA3, 0x7F}.
- *
- * Steps:
- *   for (size_t i = 0; i < len; i++) {
- *       Parse hex[2*i]   as high nibble  ('0'-'9', 'a'-'f', 'A'-'F')
- *       Parse hex[2*i+1] as low nibble
- *       If either character is not valid hex: return -EINVAL.
- *       bytes[i] = (hi << 4) | lo;
- *   }
- *   return 0;
- *
- * Returns 0 on success, -EINVAL if hex contains a non-hex character.
+ * Reverse of bytes_to_hex: "a37f" becomes {0xA3, 0x7F}. Reads exactly
+ * 2*len characters, so the caller must ensure the input is at least
+ * that long and terminated. Rejects any non-hex character with -EINVAL,
+ * which is what stops malformed token input from being decoded.
+ * Returns 0 on success.
  * ================================================================ */
 int hex_to_bytes(const char *hex, unsigned char *bytes, size_t len)
 {

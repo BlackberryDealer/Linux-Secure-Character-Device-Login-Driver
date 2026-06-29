@@ -1,29 +1,15 @@
 /* ================================================================
- * core.c — Subsystem Infrastructure & Sysfs Management
- * CSC1107 Project 12 — Secure Character Device Login Driver
+ * core.c - Subsystem Infrastructure and Sysfs Management
+ * CSC1107 Project 12 - Secure Character Device Login Driver
+ * Owner: Member 1
  *
- * ╔══════════════════════════════════════════════════════════════╗
- * ║  MEMBER 1 — Subsystem Infrastructure & Sysfs Management      ║
- * ║  STATUS: IMPLEMENTED                                         ║
- * ╠══════════════════════════════════════════════════════════════╣
- * ║  Completed work:                                             ║
- * ║   [DONE]  Basic device registration (alloc_chrdev_region,    ║
- * ║          cdev_init, class_create, device_create)             ║
- * ║   [DONE]  Module parameter security (0000 permissions +      ║
- * ║          memset-zero of password after hashing)              ║
- * ║   [DONE]  Kernel version compatibility (#if 6.4 check)       ║
- * ║   [DONE]  failed_logins_show() — sysfs read callback         ║
- * ║   [DONE]  core_sysfs_init()    — sysfs telemetry dashboard   ║
- * ║   [DONE]  core_sysfs_remove()  — sysfs cleanup               ║
- * ║                                                              ║
- * ║  Verify it works after building & loading the module:        ║
- * ║   $ cat /sys/kernel/secure_dev/failed_logins                 ║
- * ║   0                                                          ║
- * ║                                                              ║
- * ║  (The counter will increment once Member 2 implements the    ║
- * ║   real LOGIN ioctl case in fops.c and calls                  ║
- * ║   atomic_inc(&failed_login_count) on failure.)               ║
- * ╚══════════════════════════════════════════════════════════════╝
+ * Brings the driver up and tears it down:
+ *   - Registers the char device (region, cdev, class, /dev node).
+ *   - Hashes the admin password at load and wipes the plaintext.
+ *   - Publishes a read-only failed-login counter on sysfs at
+ *     /sys/kernel/secure_dev/failed_logins.
+ *   - Starts the sysfs, session and peripheral subsystems in order
+ *     and rolls each one back on failure.
  * ================================================================ */
 
 #include "secure_internal.h"
@@ -35,18 +21,12 @@ MODULE_DESCRIPTION("Secure Character Device Login Driver — Project 12");
 MODULE_VERSION("1.0");
 MODULE_SOFTDEP("pre: sha256");
 
-/* ── Module parameters (Member 1's "Secure Parameter Isolation" feature) ──
- *
- *   Permissions 0000 means: NOT readable from /sys/module/secure_driver/
- *   parameters/.  A boot-time password set via insmod is therefore not
- *   exposed in /sys after the module loads.  Combined with the password
- *   being zeroed immediately after hashing (in init below), this means
- *   the plaintext credential lives in kernel memory for only a few
- *   microseconds before being scrubbed.
- *
- *   Member 1: This is your "Secure Parameter Isolation" feature.
- *   Explain WHY 0000 permissions matter for security in your report.
- * ──────────────────────────────────────────────────────────────────────── */
+/* ── Module parameters ────────────────────────────────────────────
+ * The 0000 permission keeps these out of /sys/module/secure_driver/
+ * parameters/, so a password passed via insmod is never exposed there.
+ * The plaintext is also zeroed right after hashing (see init below), so
+ * it only lives in kernel memory briefly.
+ * ──────────────────────────────────────────────────────────────── */
 char        *param_username = "admin";
 static char param_password[128] = "SecurePass123";
 module_param(param_username, charp, 0000);
@@ -61,21 +41,12 @@ struct kobject *secure_kobj     = NULL;
 atomic_t        failed_login_count = ATOMIC_INIT(0);
 
 /* ================================================================
- * failed_logins_show() — sysfs read callback (Member 1 implementation)
+ * failed_logins_show() - sysfs read callback.
  *
- * Called automatically by the kernel whenever user-space does:
- *     cat /sys/kernel/secure_dev/failed_logins
- *
- * The kernel hands us a page-sized buffer (PAGE_SIZE = 4 KB) and
- * expects us to write our text representation into it.  We read
- * the atomic counter (which Member 2 increments on every failed
- * login attempt in fops.c) and format it as decimal text.
- *
- * @kobj  — kobject this attribute belongs to (we don't use it)
- * @attr  — kobj_attribute descriptor (we don't use it either)
- * @buf   — destination buffer, at least PAGE_SIZE bytes
- *
- * Returns the number of bytes written (sprintf gives us this).
+ * Runs when user space reads /sys/kernel/secure_dev/failed_logins.
+ * Formats the atomic failed-login counter (incremented by fops.c on
+ * each rejected login) into the kernel-supplied buffer and returns
+ * the number of bytes written.
  * ================================================================ */
 static ssize_t failed_logins_show(struct kobject *kobj,
                                    struct kobj_attribute *attr,
@@ -90,23 +61,13 @@ static ssize_t failed_logins_show(struct kobject *kobj,
 static struct kobj_attribute failed_logins_attr = __ATTR_RO(failed_logins);
 
 /* ================================================================
- * core_sysfs_init() — Build the sysfs telemetry dashboard
- *                     (Member 1 implementation)
+ * core_sysfs_init() - build the sysfs monitoring node.
  *
- * Creates:
- *   /sys/kernel/secure_dev/                — directory (kobject)
- *   /sys/kernel/secure_dev/failed_logins   — read-only attribute file
- *
- * After this runs, admins can monitor the driver in real time:
- *     cat /sys/kernel/secure_dev/failed_logins        (one-shot read)
- *     watch -n1 cat /sys/kernel/secure_dev/failed_logins  (live view)
- *
- * Why sysfs and not just dmesg?
- *   • dmesg is a noisy circular log shared by the whole kernel
- *   • sysfs gives admins ONE clean integer they can scrape directly
- *   • Works with monitoring tools (Prometheus exporters, Nagios, etc.)
- *
- * Returns 0 on success, negative errno on failure.
+ * Creates the /sys/kernel/secure_dev/ directory and the read-only
+ * failed_logins file inside it, giving admins one clean integer to
+ * scrape instead of grepping dmesg. Rolls back the kobject if the
+ * file cannot be created. Returns 0 on success, negative errno on
+ * failure.
  * ================================================================ */
 static int core_sysfs_init(void)
 {
@@ -136,15 +97,11 @@ static int core_sysfs_init(void)
 }
 
 /* ================================================================
- * core_sysfs_remove() — Tear down the sysfs telemetry dashboard
- *                       (Member 1 implementation)
+ * core_sysfs_remove() - tear down the sysfs node.
  *
- * Called from secure_driver_exit() during module unload.  Order matters:
- *   1. Remove the file FIRST (sysfs_remove_file)
- *   2. THEN drop the kobject reference (kobject_put)
- * Doing kobject_put first would leave a dangling file.
- *
- * Safe to call even if core_sysfs_init() never ran (the NULL check).
+ * Removes the file before dropping the kobject reference (the reverse
+ * order would leave a dangling file). The NULL check makes it safe to
+ * call even if core_sysfs_init() never ran.
  * ================================================================ */
 static void core_sysfs_remove(void)
 {
@@ -157,13 +114,13 @@ static void core_sysfs_remove(void)
 }
 
 /* ================================================================
- * secure_driver_init() — Module Load (insmod)
+ * secure_driver_init() - module load (insmod).
  *
- * ★ This function is COMPLETE and WORKING from Day 1 so that other
- *   members can test their stubs as soon as the repo is cloned.
- *
- *   Member 1: you should still UNDERSTAND every line below for your
- *   report.  Feel free to enhance with extra error handling or logging.
+ * Eight ordered steps: hash and wipe the password, register the char
+ * device region, cdev, class and /dev node, then start the sysfs,
+ * session and peripheral subsystems. Every step that can fail rolls
+ * back the earlier ones in reverse, so a failed load leaves nothing
+ * registered. Returns 0 on success, negative errno on failure.
  * ================================================================ */
 static int __init secure_driver_init(void)
 {
@@ -174,14 +131,16 @@ static int __init secure_driver_init(void)
     printk(KERN_INFO "secure_dev: Loading Secure Character Device Login Driver\n");
     printk(KERN_INFO "secure_dev: ============================================\n");
 
-    /* Step 1: hash admin password via Member 4's compute_sha256 */
+    /* Step 1: hash the admin password, then wipe the plaintext.
+     * The wipe runs on the failure path too, so the plaintext never
+     * lingers in kernel memory even if hashing fails. */
     ret = compute_sha256((unsigned char *)param_password,
                          strlen(param_password), stored_pw_hash);
     if (ret) {
         printk(KERN_ERR "secure_dev: compute_sha256 failed: %d\n", ret);
+        memset(param_password, 0, strlen(param_password));
         return ret;
     }
-    /* Wipe plaintext password from memory — Secure Parameter Isolation */
     memset(param_password, 0, strlen(param_password));
 
     /* Step 2: allocate dynamic device major number */

@@ -1,27 +1,13 @@
 /* ================================================================
- * session.c — State Machine & Concurrent Kernel Locking Engine
- * CSC1107 Project 12 — Secure Character Device Login Driver
+ * session.c - State Machine and Concurrent Kernel Locking Engine
+ * CSC1107 Project 12 - Secure Character Device Login Driver
+ * Owner: Member 3
  *
- * ╔══════════════════════════════════════════════════════════════╗
- * ║  MEMBER 3 — State Machine & Concurrent Kernel Locking Engine ║
- * ║  STATUS: IMPLEMENTED                                         ║
- * ╠══════════════════════════════════════════════════════════════╣
- * ║  Completed work:                                            ║
- * ║   [DONE]  session_subsystem_init()    — mutex + list init    ║
- * ║   [DONE]  session_subsystem_cleanup() — free leftover sessions║
- * ║   [DONE]  session_alloc()  — kmalloc + add to global list    ║
- * ║   [DONE]  session_free()   — remove from list + wipe + kfree ║
- * ║   [DONE]  flush_all_sessions() — iterate list, clear auth    ║
- * ║                                                              ║
- * ║  "Flashy" features for the report:                          ║
- * ║   - Dynamic Context Memory Binding: kmalloc'd sessions       ║
- * ║     attached to file->private_data (no static array)         ║
- * ║   - Kernel Mutex Primitives: mutex_lock/unlock around list   ║
- * ║                                                              ║
- * ║  Critical design decision: each session is allocated ON      ║
- * ║  DEMAND (when a process opens /dev/secure_dev), not from a   ║
- * ║  fixed-size array. Sessions scale to any number of processes.║
- * ╚══════════════════════════════════════════════════════════════╝
+ * Owns the lifecycle and locking of session records. Each session is
+ * allocated on demand when a process opens /dev/secure_dev (not from a
+ * fixed array), attached to file->private_data, and linked into a
+ * global list so a peripheral event can flush them all at once. One
+ * mutex serialises every change to that list and to session fields.
  *
  * ── CONCURRENCY MODEL (read this before touching the locking) ──
  *

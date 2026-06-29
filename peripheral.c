@@ -1,28 +1,14 @@
 /* ================================================================
- * peripheral.c — Asynchronous Peripheral Event Interceptor
- * CSC1107 Project 12 — Secure Character Device Login Driver
+ * peripheral.c - Asynchronous Peripheral Event Interceptor
+ * CSC1107 Project 12 - Secure Character Device Login Driver
+ * Owner: Member 5
  *
- * ╔══════════════════════════════════════════════════════════════╗
- * ║  MEMBER 5 — Asynchronous Peripheral Event Interceptor        ║
- * ╠══════════════════════════════════════════════════════════════╣
- * ║  Implemented:                                               ║
- * ║   [DONE]  peripheral_notifier_fn() — the callback the kernel ║
- * ║                                       calls on each netdev   ║
- * ║                                       event                  ║
- * ║   [DONE]  peripheral_register()    — install the notifier    ║
- * ║   [DONE]  peripheral_unregister()  — remove the notifier     ║
- * ║                                                              ║
- * ║  Your "flashy" features for the report:                      ║
- * ║   - Kernel Netdevice Notifier Block: subscribe to async      ║
- * ║     network state changes via register_netdevice_notifier    ║
- * ║   - Hardware State Interception & Purge: catch NETDEV_UP /   ║
- * ║     NETDEV_DOWN events from the RJ45 port and call           ║
- * ║     flush_all_sessions() from session.c — every plug/unplug  ║
- * ║     of the Ethernet cable logs everyone out                  ║
- * ║                                                              ║
- * ║  This directly fulfils the CSC1107 spec requirement about    ║
- * ║  Ethernet cable peripheral detection (Example 2 in the brief)║
- * ╚══════════════════════════════════════════════════════════════╝
+ * Registers a netdevice notifier so the driver reacts to network
+ * interface state changes. When a link goes up or down (for example an
+ * Ethernet cable plugged into or pulled from the RJ45 port) it calls
+ * flush_all_sessions(), forcing every open session back to the logged-
+ * out state. This is the project's peripheral-detection requirement:
+ * a hardware event drives a security action.
  * ================================================================ */
 
 #include "secure_internal.h"
@@ -34,37 +20,13 @@ static bool notifier_registered = false;
 static atomic_t module_ready = ATOMIC_INIT(0);
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 5 TODO #1:  peripheral_notifier_fn()                 │
- * └──────────────────────────────────────────────────────────────┘
+ * peripheral_notifier_fn() - kernel callback for every netdev event.
  *
- * The kernel calls this function EVERY time a network interface
- * changes state.  Your job: catch the events that matter (cable
- * plugged in / pulled out) and flush all driver sessions.
- *
- * Function signature is FIXED by the kernel — do not change it.
- *
- * Steps:
- *   1. struct net_device *dev = netdev_notifier_info_to_dev(data);
- *      (Optional — only needed if you want to log the interface name)
- *
- *   2. switch (event) {
- *      case NETDEV_UP:
- *          printk("[PERIPHERAL] %s link UP — flushing sessions",
- *                 dev->name);
- *          flush_all_sessions();
- *          break;
- *      case NETDEV_DOWN:
- *          printk("[PERIPHERAL] %s link DOWN — flushing sessions",
- *                 dev->name);
- *          flush_all_sessions();
- *          break;
- *      default:
- *          // ignore other events (NETDEV_CHANGE, NETDEV_REGISTER, etc.)
- *          break;
- *      }
- *
- *   3. return NOTIFY_DONE;   // tells kernel "we handled it"
+ * The signature is fixed by the kernel. The module_ready guard makes us
+ * ignore the events the kernel replays while we are still registering.
+ * We act only on NETDEV_UP and NETDEV_DOWN, flushing all sessions on
+ * either, and ignore every other event. Always returns NOTIFY_DONE so
+ * the rest of the notifier chain still runs.
  * ================================================================ */
 static int peripheral_notifier_fn(struct notifier_block *nb,
                                    unsigned long event, void *data)
@@ -112,18 +74,12 @@ static struct notifier_block peripheral_nb = {
 
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 5 TODO #2:  peripheral_register()                    │
- * └──────────────────────────────────────────────────────────────┘
+ * peripheral_register() - install the netdevice notifier.
  *
- * Called by core.c during module load.  Registers our callback
- * with the kernel so we receive all network events from now on.
- *
- * Steps:
- *   1. ret = register_netdevice_notifier(&peripheral_nb);
- *   2. If ret != 0: printk error and return ret.
- *   3. notifier_registered = true;
- *   4. printk success and return 0.
+ * Called by core.c during module load. On success it records that the
+ * notifier is registered and sets module_ready so later events are
+ * handled. Returns 0 on success, or the error from
+ * register_netdevice_notifier() on failure.
  * ================================================================ */
 int peripheral_register(void)
 {
@@ -152,22 +108,12 @@ int peripheral_register(void)
 }
 
 /* ================================================================
- * ┌──────────────────────────────────────────────────────────────┐
- * │  MEMBER 5 TODO #3:  peripheral_unregister()                  │
- * └──────────────────────────────────────────────────────────────┘
+ * peripheral_unregister() - remove the netdevice notifier.
  *
- * Called by core.c during module unload.  REMOVES our callback so
- * the kernel stops calling us after the module is gone.
- *
- * ⚠ CRITICAL: if you forget this, the kernel will eventually try
- *    to call a function in your module after it has been removed,
- *    causing a kernel panic.  Always unregister symmetrically.
- *
- * Steps:
- *   1. If notifier_registered:
- *        unregister_netdevice_notifier(&peripheral_nb);
- *        notifier_registered = false;
- *   2. printk.
+ * Called by core.c during module unload. Clearing module_ready first,
+ * then unregistering, ensures no callback runs against a module that is
+ * going away. Skipping this would let the kernel call into freed module
+ * code and panic, so registration and unregistration stay symmetric.
  * ================================================================ */
 void peripheral_unregister(void)
 {
