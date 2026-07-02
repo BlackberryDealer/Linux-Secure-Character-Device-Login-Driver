@@ -1,0 +1,15 @@
+# Force LF line endings for everything in this repo, regardless of the
+# platform a contributor edits on (Windows/macOS/Linux). This driver is
+# built and run on a Raspberry Pi: a CRLF-terminated run.sh fails there
+# with "run.sh: line 1: $'\r': command not found" / "bad interpreter"
+# because the shell reads the trailing \r as part of the command. Keeping
+# this file in the repo means `git clone` / `git checkout` always produces
+# LF files on any machine, so run.sh works on the Pi without manual
+# conversion (e.g. `sed -i 's/\r$//' run.sh`) after every edit.
+* text=auto eol=lf
+
+*.c   text eol=lf
+*.h   text eol=lf
+*.sh  text eol=lf
+Makefile text eol=lf
+*.md  text eol=lf

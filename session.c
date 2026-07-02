@@ -1,7 +1,6 @@
 /* ================================================================
  * session.c - State Machine and Concurrent Kernel Locking Engine
  * CSC1107 Project 12 - Secure Character Device Login Driver
- * Owner: Member 3
  *
  * Owns the lifecycle and locking of session records. Each session is
  * allocated on demand when a process opens /dev/secure_dev (not from a
@@ -98,7 +97,7 @@ void session_subsystem_cleanup(void)
 /* ================================================================
  * session_alloc()
  *
- * Called by Member 2's secure_open() when a new process opens
+ * Called by fops.c's secure_open() when a new process opens
  * /dev/secure_dev. This is the "Dynamic Context Memory Binding"
  * feature — one descriptor allocated on demand from the kernel slab,
  * then linked into the global list so flush_all_sessions() can find it.
@@ -143,7 +142,7 @@ struct session_entry *session_alloc(void)
 /* ================================================================
  * session_free()
  *
- * Called by Member 2's secure_release() when a process closes the
+ * Called by fops.c's secure_release() when a process closes the
  * device. Removes the session from the global list, scrubs its
  * secrets, and returns the memory to the slab allocator.
  *
@@ -180,7 +179,7 @@ void session_free(struct session_entry *sess)
 /* ================================================================
  * flush_all_sessions()
  *
- * Called by Member 5's peripheral.c when an Ethernet link change
+ * Called by peripheral.c when an Ethernet link change
  * (NETDEV_UP / NETDEV_DOWN) is detected. Forcibly de-authenticates
  * EVERY active session — a hardware-triggered, system-wide logout.
  *

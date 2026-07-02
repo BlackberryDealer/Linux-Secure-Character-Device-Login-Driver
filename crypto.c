@@ -1,7 +1,6 @@
 /* ================================================================
  * crypto.c - Cryptographic Subsystem and Side-Channel Shielding
  * CSC1107 Project 12 - Secure Character Device Login Driver
- * Owner: Member 4
  *
  * Provides the driver's real cryptography:
  *   - compute_sha256()                SHA-256 via the kernel crypto API.

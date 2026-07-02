@@ -6,17 +6,17 @@
 #   secure_driver.ko  — kernel module (5 .c files linked together)
 #   user_app          — user-space test application
 #
-# File ownership:
-#   core.c        → Member 1 (Subsystem Infrastructure & Sysfs)
-#   fops.c        → Member 2 (File Operations & Isolation Matrix)
-#   session.c     → Member 3 (State Machine & Locking Engine)
-#   crypto.c      → Member 4 (Cryptographic Subsystem)
-#   peripheral.c  → Member 5 (Peripheral Event Interceptor)
-#   secure_internal.h → LOCKED contract (do not modify)
-#   secure_driver.h   → LOCKED contract shared with user_app
-#   user_app.c    → shared test program
-#   run.sh        → shared automation script
-#   Makefile      → shared build infrastructure
+# What each file is responsible for:
+#   core.c        → Subsystem Infrastructure & Sysfs
+#   fops.c        → File Operations & Isolation Matrix
+#   session.c     → State Machine & Locking Engine
+#   crypto.c      → Cryptographic Subsystem
+#   peripheral.c  → Peripheral Event Interceptor
+#   secure_internal.h → LOCKED contract shared by the 5 files above
+#   secure_driver.h   → LOCKED contract shared with user_app.c
+#   user_app.c    → user-space test program
+#   run.sh        → end-to-end build/load/test automation script
+#   Makefile      → this file
 #
 # Usage:
 #   make              build everything

@@ -1,7 +1,6 @@
 /* ================================================================
  * peripheral.c - Asynchronous Peripheral Event Interceptor
  * CSC1107 Project 12 - Secure Character Device Login Driver
- * Owner: Member 5
  *
  * Registers a netdevice notifier so the driver reacts to network
  * interface state changes. When a link goes up or down (for example an

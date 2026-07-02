@@ -1,7 +1,6 @@
 /* ================================================================
  * core.c - Subsystem Infrastructure and Sysfs Management
  * CSC1107 Project 12 - Secure Character Device Login Driver
- * Owner: Member 1
  *
  * Brings the driver up and tears it down:
  *   - Registers the char device (region, cdev, class, /dev node).
@@ -183,7 +182,7 @@ static int __init secure_driver_init(void)
         return PTR_ERR(secure_device);
     }
 
-    /* Step 6: Member 1's sysfs telemetry dashboard */
+    /* Step 6: this file's sysfs telemetry dashboard (core_sysfs_init above) */
     ret = core_sysfs_init();
     if (ret) {
         device_destroy(secure_class, dev_num);
@@ -193,7 +192,7 @@ static int __init secure_driver_init(void)
         return ret;
     }
 
-    /* Step 7: Member 3's session subsystem */
+    /* Step 7: start the session subsystem (session.c) */
     ret = session_subsystem_init();
     if (ret) {
         core_sysfs_remove();
@@ -204,7 +203,7 @@ static int __init secure_driver_init(void)
         return ret;
     }
 
-    /* Step 8: Member 5's peripheral notifier */
+    /* Step 8: register the peripheral notifier (peripheral.c) */
     ret = peripheral_register();
     if (ret) {
         session_subsystem_cleanup();
@@ -230,9 +229,9 @@ static void __exit secure_driver_exit(void)
 {
     dev_t dev_num = MKDEV(major_number, 0);
 
-    peripheral_unregister();          /* Member 5 */
-    session_subsystem_cleanup();      /* Member 3 */
-    core_sysfs_remove();              /* Member 1 */
+    peripheral_unregister();          /* peripheral.c */
+    session_subsystem_cleanup();      /* session.c */
+    core_sysfs_remove();              /* this file's sysfs dashboard */
 
     device_destroy(secure_class, dev_num);
     class_destroy(secure_class);

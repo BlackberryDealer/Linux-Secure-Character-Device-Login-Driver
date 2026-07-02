@@ -169,4 +169,4 @@ dmesg -w | grep secure_dev
 ## 💡 Pro-Tip for Git Contributions
 
 - **Do NOT edit `secure_driver.h` or `secure_internal.h`**: These headers form a hard cross-file compiler contract. Modifying function parameters or declarations in these files will disrupt integration across the other code files.
-- **Respect file ownership**: Each `.c` file is owned by one team member (see the banner at the top of each source file). Keep changes within your own file so the locked header contract continues to link cleanly.
+- **Respect file boundaries**: each `.c` file owns one subsystem (see the description at the top of each source file). Keep changes scoped to the right file so the locked header contract (`secure_internal.h`) continues to link cleanly.

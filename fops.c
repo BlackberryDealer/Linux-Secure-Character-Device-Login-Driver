@@ -1,7 +1,6 @@
 /* ================================================================
  * fops.c - File Operations and User-Kernel Isolation Matrix
  * CSC1107 Project 12 - Secure Character Device Login Driver
- * Owner: Member 2
  *
  * Implements the device file_operations: open, release, read, write
  * and ioctl. read and write sit behind a strict security gate that

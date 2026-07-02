@@ -5,9 +5,10 @@
  * ╔══════════════════════════════════════════════════════════════╗
  * ║  ⚠ DO NOT MODIFY THIS FILE WITHOUT TEAM AGREEMENT  ⚠       ║
  * ║                                                              ║
- * ║  This header is the contract between all 5 members. Every    ║
- * ║  function signature and global variable type is defined      ║
- * ║  here. If you change a function signature in your .c file    ║
+ * ║  This header is the contract between all five kernel .c      ║
+ * ║  files (core.c, fops.c, session.c, crypto.c, peripheral.c).  ║
+ * ║  Every function signature and global variable type is        ║
+ * ║  defined here. If a .c file changes a function signature     ║
  * ║  to differ from what is declared here, the build will fail.  ║
  * ║                                                              ║
  * ║  This is INTENTIONAL — it forces clean integration.          ║
@@ -36,9 +37,9 @@
 #include <linux/version.h>
 #include <linux/list.h>          /* list_head, list_add, list_del               */
 #include <linux/atomic.h>        /* atomic_t, atomic_inc, atomic_read           */
-#include <linux/kobject.h>       /* kobject_create_and_add (Member 1 sysfs)     */
+#include <linux/kobject.h>       /* kobject_create_and_add (used by core.c sysfs) */
 #include <linux/sysfs.h>         /* sysfs_create_file, __ATTR_RO                */
-#include <linux/notifier.h>      /* notifier_block (Member 5 peripheral)        */
+#include <linux/notifier.h>      /* notifier_block (used by peripheral.c)       */
 #include <linux/netdevice.h>     /* register_netdevice_notifier, NETDEV_UP/DOWN */
 #include <crypto/hash.h>         /* crypto_alloc_shash, crypto_shash_update     */
 #include <crypto/algapi.h>       /* crypto_memneq — constant-time compare       */
@@ -49,13 +50,13 @@
 /* ================================================================
  * struct session_entry — Per-Open-File Session Record
  *
- * Allocated by Member 3's session_alloc() and attached to
- * file->private_data.  Members 2 and 4 access these fields
+ * Allocated by session.c's session_alloc() and attached to
+ * file->private_data.  fops.c and session.c access these fields
  * directly while holding session_mutex.
  *
  * The node field links each session into the global session_list
- * so that Member 5's peripheral.c can iterate them when an
- * Ethernet event triggers a flush.
+ * so that peripheral.c can iterate them when an Ethernet event
+ * triggers a flush.
  * ================================================================ */
 struct session_entry {
     bool             authenticated;
@@ -71,7 +72,7 @@ struct session_entry {
  * Each variable is DEFINED in exactly one .c file (extern here).
  * ================================================================ */
 
-/* Defined in core.c (Member 1) */
+/* Defined in core.c */
 extern int             major_number;
 extern struct class   *secure_class;
 extern struct device  *secure_device;
@@ -80,29 +81,30 @@ extern struct kobject *secure_kobj;
 extern atomic_t        failed_login_count;
 extern char           *param_username;
 
-/* Defined in crypto.c (Member 4) */
+/* Defined in crypto.c */
 extern unsigned char   stored_pw_hash[SHA256_DIGEST_BYTES];
 
-/* Defined in session.c (Member 3) */
+/* Defined in session.c */
 extern struct mutex      session_mutex;
 extern struct list_head  session_list;
 
-/* Defined in fops.c (Member 2) */
+/* Defined in fops.c */
 extern const struct file_operations secure_fops;
 
 /* ================================================================
  * Function Prototypes — LOCKED SIGNATURES
- * Implement these exactly as declared in your .c file.
+ * Each group below must be implemented exactly as declared here,
+ * in the .c file named in the section header.
  * ================================================================ */
 
-/* ── session.c (Member 3) ────────────────────────────────── */
+/* ── session.c ────────────────────────────────────────────── */
 int                    session_subsystem_init(void);
 void                   session_subsystem_cleanup(void);
 struct session_entry  *session_alloc(void);
 void                   session_free(struct session_entry *sess);
 void                   flush_all_sessions(void);
 
-/* ── crypto.c (Member 4) ─────────────────────────────────── */
+/* ── crypto.c ─────────────────────────────────────────────── */
 int  compute_sha256(const unsigned char *data, size_t data_len,
                     unsigned char *digest);
 int  crypto_constant_time_compare(const void *a, const void *b, size_t len);
@@ -110,7 +112,7 @@ void crypto_generate_token(unsigned char *out, size_t len);
 void bytes_to_hex(const unsigned char *bytes, size_t len, char *hex);
 int  hex_to_bytes(const char *hex, unsigned char *bytes, size_t len);
 
-/* ── peripheral.c (Member 5) ─────────────────────────────── */
+/* ── peripheral.c ─────────────────────────────────────────── */
 int  peripheral_register(void);
 void peripheral_unregister(void);
 
